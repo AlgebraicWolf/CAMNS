@@ -33,7 +33,7 @@ def is_extreme_point(C, alpha, d, tol):
     return np.linalg.matrix_rank(T, tol=tol) == D
 
 
-def CAMNS_LP(xs, N, lptol=1e-3, exttol=1e-6, verbose=True):
+def CAMNS_LP(xs, N, lptol=1e-8, exttol=1e-8, verbose=True):
     """
     Solve CAMNS problem via reduction to Linear Programming
 
@@ -47,6 +47,8 @@ def CAMNS_LP(xs, N, lptol=1e-3, exttol=1e-6, verbose=True):
             Tolerance for Linear Programming problem
         exttol : float
             Tolerance for extreme point check
+        verbose : bool
+            Whether to print information about progress
 
     Returns:
     --------
