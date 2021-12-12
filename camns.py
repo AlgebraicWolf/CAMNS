@@ -20,12 +20,12 @@ def is_extreme_point(C, alpha, d, tol):
             Whether point is an extreme point
     """
 
-    if alpha is None:
-        return False
+    # if alpha is None:
+    #     return False
 
     L, D = C.shape
 
-    T = C[np.all(np.abs(C @ alpha + d) <= tol, axis=1), :]
+    T = C[np.all(np.abs(C @ alpha + d) < tol, axis=1), :]
 
     if T.shape[0] == 0:
         return False
@@ -33,7 +33,7 @@ def is_extreme_point(C, alpha, d, tol):
     return np.linalg.matrix_rank(T, tol=tol) == D
 
 
-def CAMNS_LP(xs, N, lptol, exttol):
+def CAMNS_LP(xs, N, lptol=1e-3, exttol=1e-6, verbose=True):
     """
     Solve CAMNS problem via reduction to Linear Programming
 
@@ -57,52 +57,79 @@ def CAMNS_LP(xs, N, lptol, exttol):
     xs = xs.T
 
     d = np.mean(xs, axis=1, keepdims=True)
-    C, _, _ = np.linalg.svd(xs - d, full_matrices=False)
 
+    C, _, _ = np.linalg.svd(xs - d, full_matrices=False)
     C = C[:, :(N - 1)]  # Truncate the redundant one
 
+    # Step 1. Preparing variables
     B = np.diag(np.ones(L))
-
     l = 0  # Number of extracted sources
     S = np.zeros((0, L))  # Source matrix
 
+    epoch = 1
+
     while l < N:
-        w = np.random.multivariate_normal(np.zeros(L), np.diag(np.ones(L)))
+        if verbose:
+            print("Epoch {}:".format(epoch))
+            print("=" * 58)
+        epoch += 1
+        # Step 2. Choosing random vector and generating direction r
+        w = np.random.randn(L)
         r = B @ w
 
-        # Solving LP using CVXPY
+        # Step 3. Solving linear programming problems using CVXPY
         alpha1_star = cp.Variable(C.shape[1])
         alpha2_star = cp.Variable(C.shape[1])
 
         problem1 = cp.Problem(cp.Minimize(
-            r.T @ (C @ alpha1_star + d.reshape(C.shape[0]))), [C @ alpha1_star + d.reshape(C.shape[0]) >= 0])
+            r.T @ (C @ alpha1_star)), [C @ alpha1_star + d.flatten() >= 0])
         problem2 = cp.Problem(cp.Maximize(
-            r.T @ (C @ alpha2_star + d.reshape(C.shape[0]))), [C @ alpha2_star + d.reshape(C.shape[0]) >= 0])
+            r.T @ (C @ alpha2_star)), [C @ alpha2_star + d.flatten() >= 0])
 
+        if verbose:
+            print("\tLaunching LP solver 1")
         p_star = problem1.solve()
+
+        if verbose:
+            print("\tLaunching LP solver 2")
         q_star = problem2.solve()
 
-        alpha1_star = alpha1_star.value
-        alpha2_star = alpha2_star.value
+        if verbose:
+            print("\tLP solvers have finished, checking results")
 
+        alpha1_star = np.expand_dims(alpha1_star.value, axis=1)
+        alpha2_star = np.expand_dims(alpha2_star.value, axis=1)
+
+        s1 = C @ alpha1_star + d
+        s2 = C @ alpha2_star + d
+
+        # Step 4. Checking results (with augmentations from MATLAB implementation)
         if l == 0:
             if is_extreme_point(C, alpha1_star, d, exttol):
-                S = np.append(S, C @ alpha1_star + d, axis=0)
+                S = np.append(S, [s1.squeeze()], axis=0)
             if is_extreme_point(C, alpha2_star, d, exttol):
-                S = np.append(S, C @ alpha2_star + d)
+                S = np.append(S, [s2.squeeze()], axis=0)
 
         else:
-            if np.abs(p_star) / (np.linalg.norm(r) * np.linalg.norm(C @ alpha1_star + d)) >= lptol:
+            if np.abs(p_star) / (np.linalg.norm(r) * np.linalg.norm(s1)) >= lptol:
                 if is_extreme_point(C, alpha1_star, d, exttol):
-                    S = np.append(S, C @ alpha1_star + d)
+                    S = np.append(S, [s1.squeeze()], axis=0)
 
-            if np.abs(q_star) / (np.linalg.norm(r) * np.linalg.norm(C @ alpha2_star + d)) >= lptol:
+            if np.abs(q_star) / (np.linalg.norm(r) * np.linalg.norm(s2)) >= lptol:
                 if is_extreme_point(C, alpha2_star, d, exttol):
-                    S = np.append(S, C @ alpha2_star + d)
+                    S = np.append(S, [s2.squeeze()], axis=0)
 
+        # Step 5. Updating l
         l = S.shape[0]
 
+        if verbose:
+            print("\tRetrieved {}/{} sources\n".format(l, N))
+
+        # Step 6. Updating B
         Q1, R1 = np.linalg.qr(S.T)
         B = np.diag(np.ones(L)) - Q1 @ Q1.T
 
+        # Step 7 is kinda implicit, as it is hidden in the loop condition
+
+    # Yay, we're done!
     return S
